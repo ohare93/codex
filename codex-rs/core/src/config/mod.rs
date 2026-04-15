@@ -254,6 +254,10 @@ pub struct Config {
     /// ARC.
     pub approvals_reviewer: ApprovalsReviewer,
 
+    /// Optional external command to spawn for automated approval review when
+    /// `approvals_reviewer = "command"` is selected.
+    pub approvals_reviewer_command: Option<Vec<String>>,
+
     /// enforce_residency means web traffic cannot be routed outside of a
     /// particular geography. HTTP clients should direct their requests
     /// using backend-specific headers or URLs to enforce this.
@@ -1702,6 +1706,20 @@ impl Config {
             );
             approvals_reviewer = constrained_approvals_reviewer.value();
         }
+        let approvals_reviewer_command = cfg.approvals_reviewer_command.clone();
+        if approvals_reviewer == ApprovalsReviewer::Command
+            && approvals_reviewer_command
+                .as_ref()
+                .is_none_or(|command| command.is_empty())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                concat!(
+                    "`approvals_reviewer_command` must be set to a non-empty argv array ",
+                    "when `approvals_reviewer = \"command\"`"
+                ),
+            ));
+        }
         let web_search_mode = resolve_web_search_mode(&cfg, &config_profile, &features)
             .unwrap_or(WebSearchMode::Cached);
         let web_search_config = resolve_web_search_config(&cfg, &config_profile);
@@ -2032,6 +2050,7 @@ impl Config {
                 windows_sandbox_private_desktop,
             },
             approvals_reviewer: constrained_approvals_reviewer.value(),
+            approvals_reviewer_command,
             enforce_residency: enforce_residency.value,
             notify: cfg.notify,
             user_instructions,

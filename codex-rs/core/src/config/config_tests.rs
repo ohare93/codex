@@ -4338,6 +4338,25 @@ fn load_config_rejects_duplicate_agent_role_nickname_candidates() -> std::io::Re
 }
 
 #[test]
+fn load_config_rejects_missing_command_approvals_reviewer_command() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let result = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            approvals_reviewer: Some(ApprovalsReviewer::Command),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    );
+
+    let err = result.expect_err("missing approvals_reviewer_command should be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(err.to_string().contains("approvals_reviewer_command"));
+
+    Ok(())
+}
+
+#[test]
 fn load_config_rejects_unsafe_agent_role_nickname_candidates() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
@@ -4575,6 +4594,7 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
                 windows_sandbox_private_desktop: true,
             },
             approvals_reviewer: ApprovalsReviewer::User,
+            approvals_reviewer_command: None,
             enforce_residency: Constrained::allow_any(/*initial_value*/ None),
             user_instructions: None,
             user_instructions_path: None,
@@ -4724,6 +4744,7 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
             windows_sandbox_private_desktop: true,
         },
         approvals_reviewer: ApprovalsReviewer::User,
+        approvals_reviewer_command: None,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
         user_instructions_path: None,
@@ -4871,6 +4892,7 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
             windows_sandbox_private_desktop: true,
         },
         approvals_reviewer: ApprovalsReviewer::User,
+        approvals_reviewer_command: None,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
         user_instructions_path: None,
@@ -5004,6 +5026,7 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
             windows_sandbox_private_desktop: true,
         },
         approvals_reviewer: ApprovalsReviewer::User,
+        approvals_reviewer_command: None,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
         user_instructions_path: None,

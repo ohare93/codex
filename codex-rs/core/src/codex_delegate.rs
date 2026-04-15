@@ -41,7 +41,7 @@ use crate::config::Config;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request_with_cancel;
-use crate::guardian::routes_approval_to_guardian;
+use crate::guardian::routes_approval_to_automated_reviewer;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
@@ -455,7 +455,7 @@ async fn handle_exec_approval(
         available_decisions,
         ..
     } = event;
-    let decision = if routes_approval_to_guardian(parent_ctx) {
+    let decision = if routes_approval_to_automated_reviewer(parent_ctx) {
         let review_cancel = cancel_token.child_token();
         let review_rx = spawn_guardian_review(
             Arc::clone(parent_session),
@@ -532,7 +532,7 @@ async fn handle_patch_approval(
         ..
     } = event;
     let approval_id = call_id.clone();
-    let guardian_decision = if routes_approval_to_guardian(parent_ctx) {
+    let guardian_decision = if routes_approval_to_automated_reviewer(parent_ctx) {
         let files = changes
             .keys()
             .map(|path| parent_ctx.cwd.join(path))
@@ -623,7 +623,7 @@ async fn handle_request_user_input(
     event: RequestUserInputEvent,
     cancel_token: &CancellationToken,
 ) {
-    if routes_approval_to_guardian(parent_ctx)
+    if routes_approval_to_automated_reviewer(parent_ctx)
         && let Some(response) = maybe_auto_review_mcp_request_user_input(
             parent_session,
             parent_ctx,

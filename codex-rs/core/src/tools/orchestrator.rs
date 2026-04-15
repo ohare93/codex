@@ -9,7 +9,7 @@ caching).
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
-use crate::guardian::routes_approval_to_guardian;
+use crate::guardian::routes_approval_to_automated_reviewer;
 use crate::network_policy_decision::network_approval_context_from_payload;
 use crate::tools::network_approval::DeferredNetworkApproval;
 use crate::tools::network_approval::NetworkApprovalMode;
@@ -117,7 +117,7 @@ impl ToolOrchestrator {
         let otel_user = ToolDecisionSource::User;
         let otel_automated_reviewer = ToolDecisionSource::AutomatedReviewer;
         let otel_cfg = ToolDecisionSource::Config;
-        let use_guardian = routes_approval_to_guardian(turn_ctx);
+        let use_guardian = routes_approval_to_automated_reviewer(turn_ctx);
 
         // 1) Approval
         let mut already_approved = false;

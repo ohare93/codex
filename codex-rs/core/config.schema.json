@@ -169,10 +169,11 @@
       "type": "object"
     },
     "ApprovalsReviewer": {
-      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `guardian_subagent` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request.",
+      "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `guardian_subagent` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. `command` invokes an external reviewer program over stdin/stdout JSON.",
       "enum": [
         "user",
-        "guardian_subagent"
+        "guardian_subagent",
+        "command"
       ],
       "type": "string"
     },
@@ -2095,6 +2096,14 @@
         }
       ],
       "description": "Configures who approval requests are routed to for review once they have been escalated. This does not disable separate safety checks such as ARC."
+    },
+    "approvals_reviewer_command": {
+      "default": null,
+      "description": "Optional external command to spawn for automated approval review when `approvals_reviewer = \"command\"` is selected.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "apps": {
       "allOf": [

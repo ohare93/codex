@@ -29,6 +29,7 @@ use super::prompt::parse_guardian_assessment;
 use super::review_session::GuardianReviewSessionOutcome;
 use super::review_session::GuardianReviewSessionParams;
 use super::review_session::build_guardian_review_session_config;
+use super::reviewer_command::review_with_command;
 
 const GUARDIAN_REJECTION_INSTRUCTIONS: &str = concat!(
     "The agent must not attempt to achieve the same outcome via workaround, ",
@@ -90,11 +91,11 @@ fn guardian_risk_level_str(level: GuardianRiskLevel) -> &'static str {
 }
 
 /// Whether this turn should route `on-request` approval prompts through the
-/// guardian reviewer instead of surfacing them to the user. ARC may still
-/// block actions earlier in the flow.
-pub(crate) fn routes_approval_to_guardian(turn: &TurnContext) -> bool {
+/// configured automated reviewer instead of surfacing them to the user. ARC
+/// may still block actions earlier in the flow.
+pub(crate) fn routes_approval_to_automated_reviewer(turn: &TurnContext) -> bool {
     turn.approval_policy.value() == AskForApproval::OnRequest
-        && turn.config.approvals_reviewer == ApprovalsReviewer::GuardianSubagent
+        && turn.config.approvals_reviewer != ApprovalsReviewer::User
 }
 
 pub(crate) fn is_guardian_reviewer_source(
@@ -295,7 +296,8 @@ async fn run_guardian_review(
     }
 }
 
-/// Public entrypoint for approval requests that should be reviewed by guardian.
+/// Public entrypoint for approval requests that should be reviewed by the
+/// configured automated reviewer backend.
 pub(crate) async fn review_approval_request(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
@@ -303,16 +305,14 @@ pub(crate) async fn review_approval_request(
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
 ) -> ReviewDecision {
-    // Box the delegated review future so callers do not inline the entire
-    // guardian session state machine into their own async stack.
-    Box::pin(run_guardian_review(
-        Arc::clone(session),
-        Arc::clone(turn),
+    review_approval_request_with_cancel(
+        session,
+        turn,
         review_id,
         request,
         retry_reason,
-        /*external_cancel*/ None,
-    ))
+        CancellationToken::new(),
+    )
     .await
 }
 
@@ -324,15 +324,139 @@ pub(crate) async fn review_approval_request_with_cancel(
     retry_reason: Option<String>,
     cancel_token: CancellationToken,
 ) -> ReviewDecision {
-    Box::pin(run_guardian_review(
-        Arc::clone(session),
-        Arc::clone(turn),
-        review_id,
-        request,
-        retry_reason,
-        Some(cancel_token),
-    ))
-    .await
+    match turn.config.approvals_reviewer {
+        ApprovalsReviewer::GuardianSubagent => {
+            // Box the delegated review future so callers do not inline the entire
+            // guardian session state machine into their own async stack.
+            Box::pin(run_guardian_review(
+                Arc::clone(session),
+                Arc::clone(turn),
+                review_id,
+                request,
+                retry_reason,
+                Some(cancel_token),
+            ))
+            .await
+        }
+        ApprovalsReviewer::Command => {
+            run_command_review(
+                session,
+                turn,
+                review_id,
+                request,
+                retry_reason,
+                Some(cancel_token),
+            )
+            .await
+        }
+        ApprovalsReviewer::User => ReviewDecision::Denied,
+    }
+}
+
+async fn run_command_review(
+    session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
+    review_id: String,
+    request: GuardianApprovalRequest,
+    retry_reason: Option<String>,
+    external_cancel: Option<CancellationToken>,
+) -> ReviewDecision {
+    let target_item_id = guardian_request_target_item_id(&request).map(str::to_string);
+    let assessment_turn_id = guardian_request_turn_id(&request, &turn.sub_id).to_string();
+    let action_summary = guardian_assessment_action(&request);
+    session
+        .send_event(
+            turn.as_ref(),
+            EventMsg::GuardianAssessment(GuardianAssessmentEvent {
+                id: review_id.clone(),
+                target_item_id: target_item_id.clone(),
+                turn_id: assessment_turn_id.clone(),
+                status: GuardianAssessmentStatus::InProgress,
+                risk_level: None,
+                user_authorization: None,
+                rationale: None,
+                decision_source: Some(GuardianAssessmentDecisionSource::Agent),
+                action: action_summary.clone(),
+            }),
+        )
+        .await;
+
+    if external_cancel
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+    {
+        session
+            .send_event(
+                turn.as_ref(),
+                EventMsg::GuardianAssessment(GuardianAssessmentEvent {
+                    id: review_id,
+                    target_item_id,
+                    turn_id: assessment_turn_id,
+                    status: GuardianAssessmentStatus::Aborted,
+                    risk_level: None,
+                    user_authorization: None,
+                    rationale: None,
+                    decision_source: Some(GuardianAssessmentDecisionSource::Agent),
+                    action: action_summary,
+                }),
+            )
+            .await;
+        return ReviewDecision::Abort;
+    }
+
+    let result =
+        review_with_command(turn.as_ref(), &review_id, &request, retry_reason.as_deref()).await;
+    let (decision, rationale) = match result {
+        Ok(response) => (response.decision, response.rationale),
+        Err(err) => {
+            tracing::warn!(error = %err, "automated approval reviewer command failed closed");
+            (
+                ReviewDecision::Denied,
+                Some(format!("Automatic approval review failed: {err}")),
+            )
+        }
+    };
+
+    let status = match decision {
+        ReviewDecision::Approved
+        | ReviewDecision::ApprovedForSession
+        | ReviewDecision::ApprovedExecpolicyAmendment { .. }
+        | ReviewDecision::NetworkPolicyAmendment { .. } => GuardianAssessmentStatus::Approved,
+        ReviewDecision::Denied => GuardianAssessmentStatus::Denied,
+        ReviewDecision::TimedOut => GuardianAssessmentStatus::TimedOut,
+        ReviewDecision::Abort => GuardianAssessmentStatus::Aborted,
+    };
+    {
+        let mut rejections = session.services.guardian_rejections.lock().await;
+        if let Some(rationale) = rationale.as_ref()
+            && matches!(decision, ReviewDecision::Denied)
+        {
+            let rejection = GuardianRejection {
+                rationale: rationale.clone(),
+                source: GuardianAssessmentDecisionSource::Agent,
+            };
+            rejections.insert(review_id.clone(), rejection);
+        } else {
+            rejections.remove(&review_id);
+        }
+    }
+    session
+        .send_event(
+            turn.as_ref(),
+            EventMsg::GuardianAssessment(GuardianAssessmentEvent {
+                id: review_id,
+                target_item_id,
+                turn_id: assessment_turn_id,
+                status,
+                risk_level: None,
+                user_authorization: None,
+                rationale,
+                decision_source: Some(GuardianAssessmentDecisionSource::Agent),
+                action: action_summary,
+            }),
+        )
+        .await;
+    decision
 }
 
 /// Runs the guardian in a locked-down reusable review session.

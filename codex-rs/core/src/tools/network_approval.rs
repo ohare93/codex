@@ -4,7 +4,7 @@ use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request;
-use crate::guardian::routes_approval_to_guardian;
+use crate::guardian::routes_approval_to_automated_reviewer;
 use crate::network_policy_decision::denied_network_policy_message;
 use crate::tools::sandboxing::ToolError;
 use codex_network_proxy::BlockedRequest;
@@ -371,7 +371,7 @@ impl NetworkApprovalService {
         };
         let owner_call = self.resolve_single_active_call().await;
         let guardian_approval_id = Self::approval_id_for_key(&key);
-        let use_guardian = routes_approval_to_guardian(&turn_context);
+        let use_guardian = routes_approval_to_automated_reviewer(&turn_context);
         let guardian_review_id = use_guardian.then(new_guardian_review_id);
         let approval_decision = if let Some(review_id) = guardian_review_id.clone() {
             review_approval_request(

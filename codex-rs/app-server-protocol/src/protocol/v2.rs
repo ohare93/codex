@@ -304,10 +304,12 @@ impl From<CoreAskForApproval> for AskForApproval {
 /// include sandbox escapes, blocked network access, MCP approval prompts, and
 /// ARC escalations. Defaults to `user`. `guardian_subagent` uses a carefully
 /// prompted subagent to gather relevant context and apply a risk-based
-/// decision framework before approving or denying the request.
+/// decision framework before approving or denying the request. `command`
+/// invokes an external reviewer program over stdin/stdout JSON.
 pub enum ApprovalsReviewer {
     User,
     GuardianSubagent,
+    Command,
 }
 
 impl ApprovalsReviewer {
@@ -315,6 +317,7 @@ impl ApprovalsReviewer {
         match self {
             ApprovalsReviewer::User => CoreApprovalsReviewer::User,
             ApprovalsReviewer::GuardianSubagent => CoreApprovalsReviewer::GuardianSubagent,
+            ApprovalsReviewer::Command => CoreApprovalsReviewer::Command,
         }
     }
 }
@@ -324,6 +327,7 @@ impl From<CoreApprovalsReviewer> for ApprovalsReviewer {
         match value {
             CoreApprovalsReviewer::User => ApprovalsReviewer::User,
             CoreApprovalsReviewer::GuardianSubagent => ApprovalsReviewer::GuardianSubagent,
+            CoreApprovalsReviewer::Command => ApprovalsReviewer::Command,
         }
     }
 }
@@ -742,6 +746,10 @@ pub struct Config {
     /// review.
     #[experimental("config/read.approvalsReviewer")]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// [UNSTABLE] Optional command to spawn for automated approval review when
+    /// `approvals_reviewer` is set to `command`.
+    #[experimental("config/read.approvalsReviewerCommand")]
+    pub approvals_reviewer_command: Option<Vec<String>>,
     pub sandbox_mode: Option<SandboxMode>,
     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
     pub forced_chatgpt_workspace_id: Option<String>,
@@ -7522,6 +7530,7 @@ mod tests {
                 mcp_elicitations: true,
             }),
             approvals_reviewer: None,
+            approvals_reviewer_command: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,
@@ -7555,6 +7564,7 @@ mod tests {
             model_provider: None,
             approval_policy: None,
             approvals_reviewer: Some(ApprovalsReviewer::GuardianSubagent),
+            approvals_reviewer_command: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,
@@ -7588,6 +7598,7 @@ mod tests {
             model_provider: None,
             approval_policy: None,
             approvals_reviewer: None,
+            approvals_reviewer_command: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,
@@ -7643,6 +7654,7 @@ mod tests {
             model_provider: None,
             approval_policy: None,
             approvals_reviewer: None,
+            approvals_reviewer_command: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,

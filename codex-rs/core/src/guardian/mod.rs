@@ -15,6 +15,7 @@ mod approval_request;
 mod prompt;
 mod review;
 mod review_session;
+mod reviewer_command;
 
 use std::time::Duration;
 
@@ -31,7 +32,7 @@ pub(crate) use review::is_guardian_reviewer_source;
 pub(crate) use review::new_guardian_review_id;
 pub(crate) use review::review_approval_request;
 pub(crate) use review::review_approval_request_with_cancel;
-pub(crate) use review::routes_approval_to_guardian;
+pub(crate) use review::routes_approval_to_automated_reviewer;
 pub(crate) use review_session::GuardianReviewSessionManager;
 
 const GUARDIAN_PREFERRED_MODEL: &str = "gpt-5.4";

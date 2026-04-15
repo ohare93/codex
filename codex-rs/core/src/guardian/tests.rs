@@ -736,18 +736,79 @@ fn guardian_timeout_message_distinguishes_timeout_from_policy_denial() {
 }
 
 #[tokio::test]
-async fn routes_approval_to_guardian_requires_auto_only_review_policy() {
+async fn routes_approval_to_automated_reviewer_requires_auto_only_review_policy() {
     let (_session, mut turn) = crate::codex::make_session_and_context().await;
     let mut config = (*turn.config).clone();
     config.approvals_reviewer = ApprovalsReviewer::User;
     turn.config = Arc::new(config.clone());
 
-    assert!(!routes_approval_to_guardian(&turn));
+    assert!(!routes_approval_to_automated_reviewer(&turn));
 
     config.approvals_reviewer = ApprovalsReviewer::GuardianSubagent;
     turn.config = Arc::new(config);
 
-    assert!(routes_approval_to_guardian(&turn));
+    assert!(routes_approval_to_automated_reviewer(&turn));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_reviewer_maps_json_response_to_review_decision() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let script_path = temp.path().join("reviewer.sh");
+    let request_path = temp.path().join("request.json");
+    std::fs::write(
+        &script_path,
+        r#"#!/bin/sh
+cat > "$1"
+printf '%s' '{"decision":"approved_for_session","rationale":"approved by external reviewer"}'
+"#,
+    )?;
+
+    let (session, mut turn) = crate::codex::make_session_and_context().await;
+    let mut config = (*turn.config).clone();
+    config.approvals_reviewer = ApprovalsReviewer::Command;
+    config.approvals_reviewer_command = Some(vec![
+        "/bin/sh".to_string(),
+        script_path.display().to_string(),
+        request_path.display().to_string(),
+    ]);
+    let config = Arc::new(config);
+    turn.config = Arc::clone(&config);
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+    let decision = tokio::time::timeout(
+        Duration::from_secs(5),
+        review_approval_request(
+            &session,
+            &turn,
+            "review-shell-command".to_string(),
+            GuardianApprovalRequest::Shell {
+                id: "shell-command".to_string(),
+                command: vec!["git".to_string(), "push".to_string()],
+                cwd: test_path_buf("/repo/codex-rs/core").abs(),
+                sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+                additional_permissions: None,
+                justification: Some("Need to push the reviewed docs fix.".to_string()),
+            },
+            Some("sandbox denied outbound push".to_string()),
+        ),
+    )
+    .await?;
+    assert_eq!(decision, ReviewDecision::ApprovedForSession);
+    let request: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&request_path)?)?;
+    assert_eq!(request["version"], 1);
+    assert_eq!(request["review_id"], "review-shell-command");
+    assert_eq!(request["turn_id"], turn.sub_id.as_str());
+    assert_eq!(
+        request["cwd"],
+        turn.cwd.as_path().to_string_lossy().as_ref()
+    );
+    assert_eq!(request["retry_reason"], "sandbox denied outbound push");
+    assert_eq!(request["request"]["tool"], "shell");
+    assert_eq!(request["request"]["command"][0], "git");
+
+    Ok(())
 }
 
 #[test]

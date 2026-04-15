@@ -88,6 +88,11 @@ pub struct ConfigToml {
     /// ARC.
     pub approvals_reviewer: Option<ApprovalsReviewer>,
 
+    /// Optional external command to spawn for automated approval review when
+    /// `approvals_reviewer = "command"` is selected.
+    #[serde(default)]
+    pub approvals_reviewer_command: Option<Vec<String>>,
+
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,
 
