@@ -90,6 +90,20 @@ pub enum ApprovalsReviewer {
 #[derive(
     Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Display, JsonSchema, TS,
 )]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+/// Configures what happens when an automated approval reviewer backend fails
+/// before returning a valid decision. Defaults to `deny` so reviewer outages do
+/// not silently bypass policy.
+pub enum ApprovalsReviewerFailurePolicy {
+    #[default]
+    Deny,
+    DeferToUser,
+}
+
+#[derive(
+    Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Display, JsonSchema, TS,
+)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum WindowsSandboxLevel {

@@ -548,6 +548,14 @@
       ],
       "type": "string"
     },
+    "ApprovalsReviewerFailurePolicy": {
+      "description": "Configures what happens when an automated approval reviewer backend fails before returning a valid decision.",
+      "enum": [
+        "deny",
+        "defer_to_user"
+      ],
+      "type": "string"
+    },
     "AppsConfig": {
       "properties": {
         "_default": {
@@ -3045,6 +3053,17 @@
             "array",
             "null"
           ]
+        },
+        "approvals_reviewer_failure_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewerFailurePolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "[UNSTABLE] What to do when an automated approval reviewer fails before returning a valid decision. Defaults to `deny`."
         },
         "compact_prompt": {
           "type": [

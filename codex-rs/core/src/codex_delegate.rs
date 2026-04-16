@@ -38,9 +38,10 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::emit_subagent_session_started;
 use crate::config::Config;
+use crate::guardian::AutomatedReviewOutcome;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::new_guardian_review_id;
-use crate::guardian::review_approval_request_with_cancel;
+use crate::guardian::review_approval_request_or_defer_with_cancel;
 use crate::guardian::routes_approval_to_automated_reviewer;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
@@ -455,7 +456,7 @@ async fn handle_exec_approval(
         available_decisions,
         ..
     } = event;
-    let decision = if routes_approval_to_automated_reviewer(parent_ctx) {
+    let automated_decision = if routes_approval_to_automated_reviewer(parent_ctx) {
         let review_cancel = cancel_token.child_token();
         let review_rx = spawn_guardian_review(
             Arc::clone(parent_session),
@@ -463,27 +464,38 @@ async fn handle_exec_approval(
             new_guardian_review_id(),
             GuardianApprovalRequest::Shell {
                 id: call_id.clone(),
-                command,
-                cwd,
+                command: command.clone(),
+                cwd: cwd.clone(),
                 sandbox_permissions: if additional_permissions.is_some() {
                     crate::sandboxing::SandboxPermissions::WithAdditionalPermissions
                 } else {
                     crate::sandboxing::SandboxPermissions::UseDefault
                 },
-                additional_permissions,
+                additional_permissions: additional_permissions.clone(),
                 justification: None,
             },
-            reason,
+            reason.clone(),
             review_cancel.clone(),
         );
-        await_approval_with_cancel(
-            async move { review_rx.await.unwrap_or_default() },
-            parent_session,
-            &approval_id_for_op,
-            cancel_token,
-            Some(&review_cancel),
+        Some(
+            await_automated_review_with_cancel(
+                async move {
+                    review_rx
+                        .await
+                        .unwrap_or(AutomatedReviewOutcome::Decision(ReviewDecision::Denied))
+                },
+                parent_session,
+                &approval_id_for_op,
+                cancel_token,
+                Some(&review_cancel),
+            )
+            .await,
         )
-        .await
+    } else {
+        None
+    };
+    let decision = if let Some(AutomatedReviewOutcome::Decision(decision)) = automated_decision {
+        decision
     } else {
         await_approval_with_cancel(
             parent_session.request_command_approval(
@@ -579,8 +591,12 @@ async fn handle_patch_approval(
             review_cancel.clone(),
         );
         Some(
-            await_approval_with_cancel(
-                async move { review_rx.await.unwrap_or_default() },
+            await_automated_review_with_cancel(
+                async move {
+                    review_rx
+                        .await
+                        .unwrap_or(AutomatedReviewOutcome::Decision(ReviewDecision::Denied))
+                },
                 parent_session,
                 &approval_id,
                 cancel_token,
@@ -591,7 +607,7 @@ async fn handle_patch_approval(
     } else {
         None
     };
-    let decision = if let Some(decision) = guardian_decision {
+    let decision = if let Some(AutomatedReviewOutcome::Decision(decision)) = guardian_decision {
         decision
     } else {
         let decision_rx = parent_session
@@ -694,14 +710,21 @@ async fn maybe_auto_review_mcp_request_user_input(
         /*retry_reason*/ None,
         review_cancel.clone(),
     );
-    let decision = await_approval_with_cancel(
-        async move { review_rx.await.unwrap_or_default() },
+    let decision = await_automated_review_with_cancel(
+        async move {
+            review_rx
+                .await
+                .unwrap_or(AutomatedReviewOutcome::Decision(ReviewDecision::Denied))
+        },
         parent_session,
         &event.call_id,
         cancel_token,
         Some(&review_cancel),
     )
     .await;
+    let AutomatedReviewOutcome::Decision(decision) = decision else {
+        return None;
+    };
     let selected_label = match decision {
         ReviewDecision::ApprovedForSession => question
             .options
@@ -737,17 +760,17 @@ fn spawn_guardian_review(
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     cancel_token: CancellationToken,
-) -> oneshot::Receiver<ReviewDecision> {
+) -> oneshot::Receiver<AutomatedReviewOutcome> {
     let (tx, rx) = oneshot::channel();
     std::thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
         else {
-            let _ = tx.send(ReviewDecision::Denied);
+            let _ = tx.send(AutomatedReviewOutcome::Decision(ReviewDecision::Denied));
             return;
         };
-        let decision = runtime.block_on(review_approval_request_with_cancel(
+        let decision = runtime.block_on(review_approval_request_or_defer_with_cancel(
             &session,
             &turn,
             review_id,
@@ -859,6 +882,33 @@ where
                 .notify_approval(approval_id, codex_protocol::protocol::ReviewDecision::Abort)
                 .await;
             codex_protocol::protocol::ReviewDecision::Abort
+        }
+        decision = fut => {
+            decision
+        }
+    }
+}
+
+async fn await_automated_review_with_cancel<F>(
+    fut: F,
+    parent_session: &Session,
+    approval_id: &str,
+    cancel_token: &CancellationToken,
+    review_cancel_token: Option<&CancellationToken>,
+) -> AutomatedReviewOutcome
+where
+    F: core::future::Future<Output = AutomatedReviewOutcome>,
+{
+    tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => {
+            if let Some(review_cancel_token) = review_cancel_token {
+                review_cancel_token.cancel();
+            }
+            parent_session
+                .notify_approval(approval_id, codex_protocol::protocol::ReviewDecision::Abort)
+                .await;
+            AutomatedReviewOutcome::Decision(codex_protocol::protocol::ReviewDecision::Abort)
         }
         decision = fut => {
             decision

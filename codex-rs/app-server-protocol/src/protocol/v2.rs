@@ -16,6 +16,7 @@ use codex_protocol::approvals::NetworkApprovalProtocol as CoreNetworkApprovalPro
 use codex_protocol::approvals::NetworkPolicyAmendment as CoreNetworkPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyRuleAction as CoreNetworkPolicyRuleAction;
 use codex_protocol::config_types::ApprovalsReviewer as CoreApprovalsReviewer;
+use codex_protocol::config_types::ApprovalsReviewerFailurePolicy as CoreApprovalsReviewerFailurePolicy;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask as CoreCollaborationModeMask;
 use codex_protocol::config_types::ForcedLoginMethod;
@@ -328,6 +329,38 @@ impl From<CoreApprovalsReviewer> for ApprovalsReviewer {
             CoreApprovalsReviewer::User => ApprovalsReviewer::User,
             CoreApprovalsReviewer::GuardianSubagent => ApprovalsReviewer::GuardianSubagent,
             CoreApprovalsReviewer::Command => ApprovalsReviewer::Command,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case", export_to = "v2/")]
+/// Configures what happens when an automated approval reviewer backend fails
+/// before returning a valid decision.
+pub enum ApprovalsReviewerFailurePolicy {
+    Deny,
+    DeferToUser,
+}
+
+impl ApprovalsReviewerFailurePolicy {
+    pub fn to_core(self) -> CoreApprovalsReviewerFailurePolicy {
+        match self {
+            ApprovalsReviewerFailurePolicy::Deny => CoreApprovalsReviewerFailurePolicy::Deny,
+            ApprovalsReviewerFailurePolicy::DeferToUser => {
+                CoreApprovalsReviewerFailurePolicy::DeferToUser
+            }
+        }
+    }
+}
+
+impl From<CoreApprovalsReviewerFailurePolicy> for ApprovalsReviewerFailurePolicy {
+    fn from(value: CoreApprovalsReviewerFailurePolicy) -> Self {
+        match value {
+            CoreApprovalsReviewerFailurePolicy::Deny => ApprovalsReviewerFailurePolicy::Deny,
+            CoreApprovalsReviewerFailurePolicy::DeferToUser => {
+                ApprovalsReviewerFailurePolicy::DeferToUser
+            }
         }
     }
 }
@@ -750,6 +783,10 @@ pub struct Config {
     /// `approvals_reviewer` is set to `command`.
     #[experimental("config/read.approvalsReviewerCommand")]
     pub approvals_reviewer_command: Option<Vec<String>>,
+    /// [UNSTABLE] What to do when an automated approval reviewer fails before
+    /// returning a valid decision. Defaults to `deny`.
+    #[experimental("config/read.approvalsReviewerFailurePolicy")]
+    pub approvals_reviewer_failure_policy: Option<ApprovalsReviewerFailurePolicy>,
     pub sandbox_mode: Option<SandboxMode>,
     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
     pub forced_chatgpt_workspace_id: Option<String>,
@@ -7531,6 +7568,7 @@ mod tests {
             }),
             approvals_reviewer: None,
             approvals_reviewer_command: None,
+            approvals_reviewer_failure_policy: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,
@@ -7565,6 +7603,7 @@ mod tests {
             approval_policy: None,
             approvals_reviewer: Some(ApprovalsReviewer::GuardianSubagent),
             approvals_reviewer_command: None,
+            approvals_reviewer_failure_policy: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,
@@ -7599,6 +7638,7 @@ mod tests {
             approval_policy: None,
             approvals_reviewer: None,
             approvals_reviewer_command: None,
+            approvals_reviewer_failure_policy: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,
@@ -7655,6 +7695,7 @@ mod tests {
             approval_policy: None,
             approvals_reviewer: None,
             approvals_reviewer_command: None,
+            approvals_reviewer_failure_policy: None,
             sandbox_mode: None,
             sandbox_workspace_write: None,
             forced_chatgpt_workspace_id: None,

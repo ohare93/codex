@@ -19,13 +19,14 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::load_global_mcp_servers;
 use crate::connectors;
+use crate::guardian::AutomatedReviewOutcome;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianMcpAnnotations;
 use crate::guardian::guardian_approval_request_to_json;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
-use crate::guardian::review_approval_request;
+use crate::guardian::review_approval_request_or_defer;
 use crate::guardian::routes_approval_to_automated_reviewer;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
@@ -825,7 +826,7 @@ async fn maybe_request_mcp_tool_approval(
 
     if routes_approval_to_automated_reviewer(turn_context) {
         let review_id = new_guardian_review_id();
-        let decision = review_approval_request(
+        let outcome = review_approval_request_or_defer(
             sess,
             turn_context,
             review_id.clone(),
@@ -833,16 +834,19 @@ async fn maybe_request_mcp_tool_approval(
             monitor_reason.clone(),
         )
         .await;
-        let decision = mcp_tool_approval_decision_from_guardian(sess, &review_id, decision).await;
-        apply_mcp_tool_approval_decision(
-            sess,
-            turn_context,
-            &decision,
-            session_approval_key,
-            persistent_approval_key,
-        )
-        .await;
-        return Some(decision);
+        if let AutomatedReviewOutcome::Decision(decision) = outcome {
+            let decision =
+                mcp_tool_approval_decision_from_guardian(sess, &review_id, decision).await;
+            apply_mcp_tool_approval_decision(
+                sess,
+                turn_context,
+                &decision,
+                session_approval_key,
+                persistent_approval_key,
+            )
+            .await;
+            return Some(decision);
+        }
     }
 
     let prompt_options = mcp_tool_approval_prompt_options(

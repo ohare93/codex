@@ -4,10 +4,12 @@
 //! selected turn environment filesystem for both local and remote turns, with
 //! sandboxing enforced by the explicit filesystem sandbox context.
 use crate::exec::is_likely_sandbox_denied;
+use crate::guardian::AutomatedReviewOutcome;
 use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::review_approval_request;
+use crate::guardian::review_approval_request_or_defer;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
+use crate::tools::sandboxing::ApprovalResponse;
 use crate::tools::sandboxing::ExecApprovalRequirement;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::Sandboxable;
@@ -120,7 +122,7 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         &'a mut self,
         req: &'a ApplyPatchRequest,
         ctx: ApprovalCtx<'a>,
-    ) -> BoxFuture<'a, ReviewDecision> {
+    ) -> BoxFuture<'a, ApprovalResponse> {
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
@@ -130,12 +132,24 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
             if req.permissions_preapproved && retry_reason.is_none() {
-                return ReviewDecision::Approved;
+                return ApprovalResponse::from_user(ReviewDecision::Approved);
             }
             if let Some(review_id) = guardian_review_id {
                 let action = ApplyPatchRuntime::build_guardian_review_request(req, ctx.call_id);
-                return review_approval_request(session, turn, review_id, action, retry_reason)
-                    .await;
+                match review_approval_request_or_defer(
+                    session,
+                    turn,
+                    review_id,
+                    action,
+                    retry_reason.clone(),
+                )
+                .await
+                {
+                    AutomatedReviewOutcome::Decision(decision) => {
+                        return ApprovalResponse::from_automated_reviewer(decision);
+                    }
+                    AutomatedReviewOutcome::DeferToUser => {}
+                }
             }
             if let Some(reason) = retry_reason {
                 let rx_approve = session
@@ -147,10 +161,10 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                         /*grant_root*/ None,
                     )
                     .await;
-                return rx_approve.await.unwrap_or_default();
+                return ApprovalResponse::from_user(rx_approve.await.unwrap_or_default());
             }
 
-            with_cached_approval(
+            let decision = with_cached_approval(
                 &session.services,
                 "apply_patch",
                 approval_keys,
@@ -163,7 +177,8 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                     rx_approve.await.unwrap_or_default()
                 },
             )
-            .await
+            .await;
+            ApprovalResponse::from_user(decision)
         })
     }
 

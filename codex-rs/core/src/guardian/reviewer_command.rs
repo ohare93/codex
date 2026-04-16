@@ -1,7 +1,6 @@
 use std::process::Stdio;
 
 use anyhow::Context;
-use codex_protocol::protocol::ReviewDecision;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -16,9 +15,12 @@ use super::approval_request::guardian_approval_request_to_json;
 use super::approval_request::guardian_request_turn_id;
 
 #[derive(Debug)]
-pub(super) struct CommandReviewResponse {
-    pub(super) decision: ReviewDecision,
-    pub(super) rationale: Option<String>,
+pub(super) enum CommandReviewResponse {
+    Decision {
+        decision: codex_protocol::protocol::ReviewDecision,
+        rationale: Option<String>,
+    },
+    DeferToUser,
 }
 
 #[derive(Serialize)]
@@ -44,6 +46,7 @@ enum CommandReviewDecision {
     ApprovedForSession,
     Denied,
     Abort,
+    DeferToUser,
 }
 
 pub(super) async fn review_with_command(
@@ -109,13 +112,16 @@ pub(super) async fn review_with_command(
     let response: CommandReviewResponseWire = serde_json::from_slice(&output.stdout)
         .context("approvals reviewer command returned malformed JSON")?;
     let decision = match response.decision {
-        CommandReviewDecision::Approved => ReviewDecision::Approved,
-        CommandReviewDecision::ApprovedForSession => ReviewDecision::ApprovedForSession,
-        CommandReviewDecision::Denied => ReviewDecision::Denied,
-        CommandReviewDecision::Abort => ReviewDecision::Abort,
+        CommandReviewDecision::Approved => codex_protocol::protocol::ReviewDecision::Approved,
+        CommandReviewDecision::ApprovedForSession => {
+            codex_protocol::protocol::ReviewDecision::ApprovedForSession
+        }
+        CommandReviewDecision::Denied => codex_protocol::protocol::ReviewDecision::Denied,
+        CommandReviewDecision::Abort => codex_protocol::protocol::ReviewDecision::Abort,
+        CommandReviewDecision::DeferToUser => return Ok(CommandReviewResponse::DeferToUser),
     };
 
-    Ok(CommandReviewResponse {
+    Ok(CommandReviewResponse::Decision {
         decision,
         rationale: response.rationale,
     })

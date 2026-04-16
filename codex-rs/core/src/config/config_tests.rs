@@ -26,6 +26,7 @@ use codex_config::permissions_toml::PermissionsToml;
 use codex_config::profile_toml::ConfigProfile;
 use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
+use codex_config::types::ApprovalsReviewerFailurePolicy;
 use codex_config::types::BundledSkillsConfig;
 use codex_config::types::FeedbackConfigToml;
 use codex_config::types::HistoryPersistence;
@@ -4357,6 +4358,26 @@ fn load_config_rejects_missing_command_approvals_reviewer_command() -> std::io::
 }
 
 #[test]
+fn load_config_sets_approvals_reviewer_failure_policy() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            approvals_reviewer_failure_policy: Some(ApprovalsReviewerFailurePolicy::DeferToUser),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )?;
+
+    assert_eq!(
+        config.approvals_reviewer_failure_policy,
+        ApprovalsReviewerFailurePolicy::DeferToUser
+    );
+
+    Ok(())
+}
+
+#[test]
 fn load_config_rejects_unsafe_agent_role_nickname_candidates() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
@@ -4595,6 +4616,7 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             },
             approvals_reviewer: ApprovalsReviewer::User,
             approvals_reviewer_command: None,
+            approvals_reviewer_failure_policy: Default::default(),
             enforce_residency: Constrained::allow_any(/*initial_value*/ None),
             user_instructions: None,
             user_instructions_path: None,
@@ -4745,6 +4767,7 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         },
         approvals_reviewer: ApprovalsReviewer::User,
         approvals_reviewer_command: None,
+        approvals_reviewer_failure_policy: Default::default(),
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
         user_instructions_path: None,
@@ -4893,6 +4916,7 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         },
         approvals_reviewer: ApprovalsReviewer::User,
         approvals_reviewer_command: None,
+        approvals_reviewer_failure_policy: Default::default(),
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
         user_instructions_path: None,
@@ -5027,6 +5051,7 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         },
         approvals_reviewer: ApprovalsReviewer::User,
         approvals_reviewer_command: None,
+        approvals_reviewer_failure_policy: Default::default(),
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
         user_instructions_path: None,

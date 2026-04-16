@@ -2,11 +2,12 @@ use super::ShellRequest;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::is_likely_sandbox_denied;
+use crate::guardian::AutomatedReviewOutcome;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
-use crate::guardian::review_approval_request;
+use crate::guardian::review_approval_request_or_defer;
 use crate::guardian::routes_approval_to_automated_reviewer;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
@@ -397,7 +398,7 @@ impl CoreShellActionProvider {
         Ok(stopwatch
             .pause_for(async move {
                 if let Some(review_id) = guardian_review_id.clone() {
-                    let decision = review_approval_request(
+                    match review_approval_request_or_defer(
                         &session,
                         &turn,
                         review_id,
@@ -407,15 +408,20 @@ impl CoreShellActionProvider {
                             program: program.to_string_lossy().into_owned(),
                             argv: argv.to_vec(),
                             cwd: workdir.clone(),
-                            additional_permissions,
+                            additional_permissions: additional_permissions.clone(),
                         },
                         /*retry_reason*/ None,
                     )
-                    .await;
-                    return PromptDecision {
-                        decision,
-                        guardian_review_id,
-                    };
+                    .await
+                    {
+                        AutomatedReviewOutcome::Decision(decision) => {
+                            return PromptDecision {
+                                decision,
+                                guardian_review_id,
+                            };
+                        }
+                        AutomatedReviewOutcome::DeferToUser => {}
+                    }
                 }
                 let decision = session
                     .request_command_approval(

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::ApprovalsReviewerFailurePolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GuardianAssessmentDecisionSource;
@@ -29,6 +30,7 @@ use super::prompt::parse_guardian_assessment;
 use super::review_session::GuardianReviewSessionOutcome;
 use super::review_session::GuardianReviewSessionParams;
 use super::review_session::build_guardian_review_session_config;
+use super::reviewer_command::CommandReviewResponse;
 use super::reviewer_command::review_with_command;
 
 const GUARDIAN_REJECTION_INSTRUCTIONS: &str = concat!(
@@ -106,6 +108,22 @@ pub(crate) fn is_guardian_reviewer_source(
         codex_protocol::protocol::SessionSource::SubAgent(SubAgentSource::Other(name))
             if name == GUARDIAN_REVIEWER_NAME
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AutomatedReviewOutcome {
+    Decision(ReviewDecision),
+    DeferToUser,
+}
+
+impl AutomatedReviewOutcome {
+    #[cfg(test)]
+    pub(crate) fn decision_or_denied(self) -> ReviewDecision {
+        match self {
+            AutomatedReviewOutcome::Decision(decision) => decision,
+            AutomatedReviewOutcome::DeferToUser => ReviewDecision::Denied,
+        }
+    }
 }
 
 /// This function always fails closed: timeouts, review-session failures, and
@@ -298,6 +316,7 @@ async fn run_guardian_review(
 
 /// Public entrypoint for approval requests that should be reviewed by the
 /// configured automated reviewer backend.
+#[cfg(test)]
 pub(crate) async fn review_approval_request(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
@@ -305,7 +324,47 @@ pub(crate) async fn review_approval_request(
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
 ) -> ReviewDecision {
-    review_approval_request_with_cancel(
+    review_approval_request_or_defer_with_cancel(
+        session,
+        turn,
+        review_id,
+        request,
+        retry_reason,
+        CancellationToken::new(),
+    )
+    .await
+    .decision_or_denied()
+}
+
+#[cfg(test)]
+pub(crate) async fn review_approval_request_with_cancel(
+    session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
+    review_id: String,
+    request: GuardianApprovalRequest,
+    retry_reason: Option<String>,
+    cancel_token: CancellationToken,
+) -> ReviewDecision {
+    review_approval_request_or_defer_with_cancel(
+        session,
+        turn,
+        review_id,
+        request,
+        retry_reason,
+        cancel_token,
+    )
+    .await
+    .decision_or_denied()
+}
+
+pub(crate) async fn review_approval_request_or_defer(
+    session: &Arc<Session>,
+    turn: &Arc<TurnContext>,
+    review_id: String,
+    request: GuardianApprovalRequest,
+    retry_reason: Option<String>,
+) -> AutomatedReviewOutcome {
+    review_approval_request_or_defer_with_cancel(
         session,
         turn,
         review_id,
@@ -316,14 +375,14 @@ pub(crate) async fn review_approval_request(
     .await
 }
 
-pub(crate) async fn review_approval_request_with_cancel(
+pub(crate) async fn review_approval_request_or_defer_with_cancel(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     review_id: String,
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     cancel_token: CancellationToken,
-) -> ReviewDecision {
+) -> AutomatedReviewOutcome {
     match turn.config.approvals_reviewer {
         ApprovalsReviewer::GuardianSubagent => {
             // Box the delegated review future so callers do not inline the entire
@@ -337,6 +396,7 @@ pub(crate) async fn review_approval_request_with_cancel(
                 Some(cancel_token),
             ))
             .await
+            .into()
         }
         ApprovalsReviewer::Command => {
             run_command_review(
@@ -349,7 +409,7 @@ pub(crate) async fn review_approval_request_with_cancel(
             )
             .await
         }
-        ApprovalsReviewer::User => ReviewDecision::Denied,
+        ApprovalsReviewer::User => AutomatedReviewOutcome::Decision(ReviewDecision::Denied),
     }
 }
 
@@ -360,7 +420,7 @@ async fn run_command_review(
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     external_cancel: Option<CancellationToken>,
-) -> ReviewDecision {
+) -> AutomatedReviewOutcome {
     let target_item_id = guardian_request_target_item_id(&request).map(str::to_string);
     let assessment_turn_id = guardian_request_turn_id(&request, &turn.sub_id).to_string();
     let action_summary = guardian_assessment_action(&request);
@@ -401,19 +461,66 @@ async fn run_command_review(
                 }),
             )
             .await;
-        return ReviewDecision::Abort;
+        return AutomatedReviewOutcome::Decision(ReviewDecision::Abort);
     }
 
     let result =
         review_with_command(turn.as_ref(), &review_id, &request, retry_reason.as_deref()).await;
     let (decision, rationale) = match result {
-        Ok(response) => (response.decision, response.rationale),
+        Ok(CommandReviewResponse::Decision {
+            decision,
+            rationale,
+        }) => (decision, rationale),
+        Ok(CommandReviewResponse::DeferToUser) => {
+            session
+                .send_event(
+                    turn.as_ref(),
+                    EventMsg::GuardianAssessment(GuardianAssessmentEvent {
+                        id: review_id,
+                        target_item_id,
+                        turn_id: assessment_turn_id,
+                        status: GuardianAssessmentStatus::Aborted,
+                        risk_level: None,
+                        user_authorization: None,
+                        rationale: Some(
+                            "External approval reviewer deferred to the user.".to_string(),
+                        ),
+                        decision_source: Some(GuardianAssessmentDecisionSource::Agent),
+                        action: action_summary,
+                    }),
+                )
+                .await;
+            return AutomatedReviewOutcome::DeferToUser;
+        }
         Err(err) => {
             tracing::warn!(error = %err, "automated approval reviewer command failed closed");
-            (
-                ReviewDecision::Denied,
-                Some(format!("Automatic approval review failed: {err}")),
-            )
+            match turn.config.approvals_reviewer_failure_policy {
+                ApprovalsReviewerFailurePolicy::Deny => (
+                    ReviewDecision::Denied,
+                    Some(format!("Automatic approval review failed: {err}")),
+                ),
+                ApprovalsReviewerFailurePolicy::DeferToUser => {
+                    session
+                        .send_event(
+                            turn.as_ref(),
+                            EventMsg::GuardianAssessment(GuardianAssessmentEvent {
+                                id: review_id,
+                                target_item_id,
+                                turn_id: assessment_turn_id,
+                                status: GuardianAssessmentStatus::Aborted,
+                                risk_level: None,
+                                user_authorization: None,
+                                rationale: Some(format!(
+                                    "External approval reviewer failed; deferred to the user: {err}"
+                                )),
+                                decision_source: Some(GuardianAssessmentDecisionSource::Agent),
+                                action: action_summary,
+                            }),
+                        )
+                        .await;
+                    return AutomatedReviewOutcome::DeferToUser;
+                }
+            }
         }
     };
 
@@ -456,7 +563,13 @@ async fn run_command_review(
             }),
         )
         .await;
-    decision
+    AutomatedReviewOutcome::Decision(decision)
+}
+
+impl From<ReviewDecision> for AutomatedReviewOutcome {
+    fn from(decision: ReviewDecision) -> Self {
+        Self::Decision(decision)
+    }
 }
 
 /// Runs the guardian in a locked-down reusable review session.

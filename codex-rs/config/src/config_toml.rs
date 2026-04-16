@@ -8,6 +8,7 @@ use crate::permissions_toml::PermissionsToml;
 use crate::profile_toml::ConfigProfile;
 use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
+use crate::types::ApprovalsReviewerFailurePolicy;
 use crate::types::AppsConfigToml;
 use crate::types::AuthCredentialsStoreMode;
 use crate::types::FeedbackConfigToml;
@@ -92,6 +93,10 @@ pub struct ConfigToml {
     /// `approvals_reviewer = "command"` is selected.
     #[serde(default)]
     pub approvals_reviewer_command: Option<Vec<String>>,
+
+    /// What to do when an automated approval reviewer fails before returning a
+    /// valid decision. Defaults to `deny`.
+    pub approvals_reviewer_failure_policy: Option<ApprovalsReviewerFailurePolicy>,
 
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,

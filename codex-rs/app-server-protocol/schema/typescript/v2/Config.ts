@@ -10,6 +10,7 @@ import type { WebSearchMode } from "../WebSearchMode";
 import type { JsonValue } from "../serde_json/JsonValue";
 import type { AnalyticsConfig } from "./AnalyticsConfig";
 import type { ApprovalsReviewer } from "./ApprovalsReviewer";
+import type { ApprovalsReviewerFailurePolicy } from "./ApprovalsReviewerFailurePolicy";
 import type { AskForApproval } from "./AskForApproval";
 import type { ProfileV2 } from "./ProfileV2";
 import type { SandboxMode } from "./SandboxMode";
@@ -24,4 +25,8 @@ approvals_reviewer: ApprovalsReviewer | null, /**
  * [UNSTABLE] Optional command to spawn for automated approval review when
  * `approvals_reviewer` is set to `command`.
  */
-approvals_reviewer_command: Array<string> | null, sandbox_mode: SandboxMode | null, sandbox_workspace_write: SandboxWorkspaceWrite | null, forced_chatgpt_workspace_id: string | null, forced_login_method: ForcedLoginMethod | null, web_search: WebSearchMode | null, tools: ToolsV2 | null, profile: string | null, profiles: { [key in string]?: ProfileV2 }, instructions: string | null, developer_instructions: string | null, compact_prompt: string | null, model_reasoning_effort: ReasoningEffort | null, model_reasoning_summary: ReasoningSummary | null, model_verbosity: Verbosity | null, service_tier: ServiceTier | null, analytics: AnalyticsConfig | null} & ({ [key in string]?: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null });
+approvals_reviewer_command: Array<string> | null, /**
+ * [UNSTABLE] What to do when an automated approval reviewer fails before
+ * returning a valid decision. Defaults to `deny`.
+ */
+approvals_reviewer_failure_policy: ApprovalsReviewerFailurePolicy | null, sandbox_mode: SandboxMode | null, sandbox_workspace_write: SandboxWorkspaceWrite | null, forced_chatgpt_workspace_id: string | null, forced_login_method: ForcedLoginMethod | null, web_search: WebSearchMode | null, tools: ToolsV2 | null, profile: string | null, profiles: { [key in string]?: ProfileV2 }, instructions: string | null, developer_instructions: string | null, compact_prompt: string | null, model_reasoning_effort: ReasoningEffort | null, model_reasoning_summary: ReasoningSummary | null, model_verbosity: Verbosity | null, service_tier: ServiceTier | null, analytics: AnalyticsConfig | null} & ({ [key in string]?: number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null });

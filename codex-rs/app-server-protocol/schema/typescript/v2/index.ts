@@ -19,6 +19,7 @@ export type { AppSummary } from "./AppSummary";
 export type { AppToolApproval } from "./AppToolApproval";
 export type { AppToolsConfig } from "./AppToolsConfig";
 export type { ApprovalsReviewer } from "./ApprovalsReviewer";
+export type { ApprovalsReviewerFailurePolicy } from "./ApprovalsReviewerFailurePolicy";
 export type { AppsConfig } from "./AppsConfig";
 export type { AppsDefaultConfig } from "./AppsDefaultConfig";
 export type { AppsListParams } from "./AppsListParams";

@@ -7,8 +7,9 @@ the process manager to spawn PTYs once an ExecRequest is prepared.
 use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
+use crate::guardian::AutomatedReviewOutcome;
 use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::review_approval_request;
+use crate::guardian::review_approval_request_or_defer;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecServerEnvConfig;
 use crate::sandboxing::SandboxPermissions;
@@ -20,6 +21,7 @@ use crate::tools::runtimes::maybe_wrap_shell_lc_with_snapshot;
 use crate::tools::runtimes::shell::zsh_fork_backend;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
+use crate::tools::sandboxing::ApprovalResponse;
 use crate::tools::sandboxing::ExecApprovalRequirement;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::SandboxOverride;
@@ -37,7 +39,6 @@ use codex_network_proxy::NetworkProxy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_tools::UnifiedExecShellMode;
@@ -120,7 +121,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         &'b mut self,
         req: &'b UnifiedExecRequest,
         ctx: ApprovalCtx<'b>,
-    ) -> BoxFuture<'b, ReviewDecision> {
+    ) -> BoxFuture<'b, ApprovalResponse> {
         let keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
@@ -132,13 +133,13 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
             if let Some(review_id) = guardian_review_id {
-                return review_approval_request(
+                match review_approval_request_or_defer(
                     session,
                     turn,
                     review_id,
                     GuardianApprovalRequest::ExecCommand {
-                        id: call_id,
-                        command,
+                        id: call_id.clone(),
+                        command: command.clone(),
                         cwd: cwd.clone(),
                         sandbox_permissions: req.sandbox_permissions,
                         additional_permissions: req.additional_permissions.clone(),
@@ -147,28 +148,36 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
                     },
                     retry_reason,
                 )
-                .await;
+                .await
+                {
+                    AutomatedReviewOutcome::Decision(decision) => {
+                        return ApprovalResponse::from_automated_reviewer(decision);
+                    }
+                    AutomatedReviewOutcome::DeferToUser => {}
+                }
             }
-            with_cached_approval(&session.services, "unified_exec", keys, || async move {
-                let available_decisions = None;
-                session
-                    .request_command_approval(
-                        turn,
-                        call_id,
-                        /*approval_id*/ None,
-                        command,
-                        cwd.clone(),
-                        reason,
-                        ctx.network_approval_context.clone(),
-                        req.exec_approval_requirement
-                            .proposed_execpolicy_amendment()
-                            .cloned(),
-                        req.additional_permissions.clone(),
-                        available_decisions,
-                    )
-                    .await
-            })
-            .await
+            let decision =
+                with_cached_approval(&session.services, "unified_exec", keys, || async move {
+                    let available_decisions = None;
+                    session
+                        .request_command_approval(
+                            turn,
+                            call_id,
+                            /*approval_id*/ None,
+                            command,
+                            cwd.clone(),
+                            reason,
+                            ctx.network_approval_context.clone(),
+                            req.exec_approval_requirement
+                                .proposed_execpolicy_amendment()
+                                .cloned(),
+                            req.additional_permissions.clone(),
+                            available_decisions,
+                        )
+                        .await
+                })
+                .await;
+            ApprovalResponse::from_user(decision)
         })
     }
 

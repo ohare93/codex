@@ -20,6 +20,7 @@ use codex_network_proxy::NetworkProxyConfig;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::config_types::ApprovalsReviewerFailurePolicy;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
@@ -807,6 +808,104 @@ printf '%s' '{"decision":"approved_for_session","rationale":"approved by externa
     assert_eq!(request["retry_reason"], "sandbox denied outbound push");
     assert_eq!(request["request"]["tool"], "shell");
     assert_eq!(request["request"]["command"][0], "git");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn command_reviewer_can_defer_to_user() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let script_path = temp.path().join("reviewer.sh");
+    std::fs::write(
+        &script_path,
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s' '{"decision":"defer_to_user","rationale":"policy abstained"}'
+"#,
+    )?;
+
+    let (session, mut turn) = crate::codex::make_session_and_context().await;
+    let mut config = (*turn.config).clone();
+    config.approvals_reviewer = ApprovalsReviewer::Command;
+    config.approvals_reviewer_command = Some(vec![
+        "/bin/sh".to_string(),
+        script_path.display().to_string(),
+    ]);
+    let config = Arc::new(config);
+    turn.config = Arc::clone(&config);
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        review_approval_request_or_defer(
+            &session,
+            &turn,
+            "review-shell-command-defer".to_string(),
+            GuardianApprovalRequest::Shell {
+                id: "shell-command-defer".to_string(),
+                command: vec!["git".to_string(), "push".to_string()],
+                cwd: test_path_buf("/repo/codex-rs/core").abs(),
+                sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+                additional_permissions: None,
+                justification: None,
+            },
+            /*retry_reason*/ None,
+        ),
+    )
+    .await?;
+
+    assert_eq!(outcome, AutomatedReviewOutcome::DeferToUser);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn command_reviewer_failure_can_defer_to_user() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let script_path = temp.path().join("reviewer.sh");
+    std::fs::write(
+        &script_path,
+        r#"#!/bin/sh
+cat >/dev/null
+exit 1
+"#,
+    )?;
+
+    let (session, mut turn) = crate::codex::make_session_and_context().await;
+    let mut config = (*turn.config).clone();
+    config.approvals_reviewer = ApprovalsReviewer::Command;
+    config.approvals_reviewer_command = Some(vec![
+        "/bin/sh".to_string(),
+        script_path.display().to_string(),
+    ]);
+    config.approvals_reviewer_failure_policy = ApprovalsReviewerFailurePolicy::DeferToUser;
+    let config = Arc::new(config);
+    turn.config = Arc::clone(&config);
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        review_approval_request_or_defer(
+            &session,
+            &turn,
+            "review-shell-command-failure-defer".to_string(),
+            GuardianApprovalRequest::Shell {
+                id: "shell-command-failure-defer".to_string(),
+                command: vec!["git".to_string(), "push".to_string()],
+                cwd: test_path_buf("/repo/codex-rs/core").abs(),
+                sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+                additional_permissions: None,
+                justification: None,
+            },
+            /*retry_reason*/ None,
+        ),
+    )
+    .await?;
+
+    assert_eq!(outcome, AutomatedReviewOutcome::DeferToUser);
 
     Ok(())
 }

@@ -177,6 +177,14 @@
       ],
       "type": "string"
     },
+    "ApprovalsReviewerFailurePolicy": {
+      "description": "Configures what happens when an automated approval reviewer backend fails before returning a valid decision. Defaults to `deny` so reviewer outages do not silently bypass policy.",
+      "enum": [
+        "deny",
+        "defer_to_user"
+      ],
+      "type": "string"
+    },
     "AppsConfigToml": {
       "additionalProperties": {
         "$ref": "#/definitions/AppConfig"
@@ -2104,6 +2112,14 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "approvals_reviewer_failure_policy": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ApprovalsReviewerFailurePolicy"
+        }
+      ],
+      "description": "What to do when an automated approval reviewer fails before returning a valid decision. Defaults to `deny`."
     },
     "apps": {
       "allOf": [

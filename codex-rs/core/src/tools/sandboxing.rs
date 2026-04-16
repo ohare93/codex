@@ -131,6 +131,28 @@ pub(crate) struct ApprovalCtx<'a> {
     pub network_approval_context: Option<NetworkApprovalContext>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ApprovalResponse {
+    pub decision: ReviewDecision,
+    pub reviewed_by_automated_reviewer: bool,
+}
+
+impl ApprovalResponse {
+    pub(crate) fn from_user(decision: ReviewDecision) -> Self {
+        Self {
+            decision,
+            reviewed_by_automated_reviewer: false,
+        }
+    }
+
+    pub(crate) fn from_automated_reviewer(decision: ReviewDecision) -> Self {
+        Self {
+            decision,
+            reviewed_by_automated_reviewer: true,
+        }
+    }
+}
+
 // Specifies what tool orchestrator should do with a given tool call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExecApprovalRequirement {
@@ -288,7 +310,7 @@ pub(crate) trait Approvable<Req> {
         &'a mut self,
         req: &'a Req,
         ctx: ApprovalCtx<'a>,
-    ) -> BoxFuture<'a, ReviewDecision>;
+    ) -> BoxFuture<'a, ApprovalResponse>;
 }
 
 pub(crate) trait Sandboxable {

@@ -142,8 +142,9 @@ impl ToolOrchestrator {
                     retry_reason: reason,
                     network_approval_context: None,
                 };
-                let decision = tool.start_approval_async(req, approval_ctx).await;
-                let otel_source = if use_guardian {
+                let approval = tool.start_approval_async(req, approval_ctx).await;
+                let decision = approval.decision;
+                let otel_source = if approval.reviewed_by_automated_reviewer {
                     otel_automated_reviewer.clone()
                 } else {
                     otel_user.clone()
@@ -153,7 +154,9 @@ impl ToolOrchestrator {
 
                 match decision {
                     ReviewDecision::Denied | ReviewDecision::Abort => {
-                        let reason = if let Some(review_id) = guardian_review_id.as_deref() {
+                        let reason = if approval.reviewed_by_automated_reviewer
+                            && let Some(review_id) = guardian_review_id.as_deref()
+                        {
                             guardian_rejection_message(tool_ctx.session.as_ref(), review_id).await
                         } else {
                             "rejected by user".to_string()
@@ -301,8 +304,9 @@ impl ToolOrchestrator {
                         network_approval_context: network_approval_context.clone(),
                     };
 
-                    let decision = tool.start_approval_async(req, approval_ctx).await;
-                    let otel_source = if use_guardian {
+                    let approval = tool.start_approval_async(req, approval_ctx).await;
+                    let decision = approval.decision;
+                    let otel_source = if approval.reviewed_by_automated_reviewer {
                         otel_automated_reviewer
                     } else {
                         otel_user
@@ -311,7 +315,9 @@ impl ToolOrchestrator {
 
                     match decision {
                         ReviewDecision::Denied | ReviewDecision::Abort => {
-                            let reason = if let Some(review_id) = guardian_review_id.as_deref() {
+                            let reason = if approval.reviewed_by_automated_reviewer
+                                && let Some(review_id) = guardian_review_id.as_deref()
+                            {
                                 guardian_rejection_message(tool_ctx.session.as_ref(), review_id)
                                     .await
                             } else {

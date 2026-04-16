@@ -29,6 +29,7 @@ use codex_config::config_toml::RealtimeConfig;
 use codex_config::config_toml::validate_model_providers;
 use codex_config::profile_toml::ConfigProfile;
 use codex_config::types::ApprovalsReviewer;
+use codex_config::types::ApprovalsReviewerFailurePolicy;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::DEFAULT_OTEL_ENVIRONMENT;
 use codex_config::types::History;
@@ -257,6 +258,10 @@ pub struct Config {
     /// Optional external command to spawn for automated approval review when
     /// `approvals_reviewer = "command"` is selected.
     pub approvals_reviewer_command: Option<Vec<String>>,
+
+    /// What to do when an automated approval reviewer fails before returning a
+    /// valid decision.
+    pub approvals_reviewer_failure_policy: ApprovalsReviewerFailurePolicy,
 
     /// enforce_residency means web traffic cannot be routed outside of a
     /// particular geography. HTTP clients should direct their requests
@@ -1707,10 +1712,12 @@ impl Config {
             approvals_reviewer = constrained_approvals_reviewer.value();
         }
         let approvals_reviewer_command = cfg.approvals_reviewer_command.clone();
+        let approvals_reviewer_failure_policy =
+            cfg.approvals_reviewer_failure_policy.unwrap_or_default();
         if approvals_reviewer == ApprovalsReviewer::Command
             && approvals_reviewer_command
                 .as_ref()
-                .is_none_or(|command| command.is_empty())
+                .is_none_or(std::vec::Vec::is_empty)
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -2051,6 +2058,7 @@ impl Config {
             },
             approvals_reviewer: constrained_approvals_reviewer.value(),
             approvals_reviewer_command,
+            approvals_reviewer_failure_policy,
             enforce_residency: enforce_residency.value,
             notify: cfg.notify,
             user_instructions,
